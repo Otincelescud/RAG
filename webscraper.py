@@ -1,22 +1,84 @@
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+import time
+import random
+import re
+
+# Scraper Algorithm
+"""
+The scraper will go down recursively through the links it finds starting from the root url, saving the new urls in a list
+The user will have to specify, the number of levels it wants the scraper to go down and the
+max number of urls it can scrape.
+The user will also have to provide a list of domains from which
+it can collect data. If instead of a list, the user provides the boolean value True, the webscraper will collect data from everywhere
+After url collection, the get_data() function will collect all html and docx files and save their
+text in a file at the output_address.
+"""
 
 class WebScraper:
-    root_url: str
-    output_address: str
+    visited = set()
+    min_delay_between_requests = 1.0
+    max_delay_between_requests = 3.0
+    headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
+    } # Change to whatever you need
 
-    def __init__(self, root_url: str, output_address: str):
-        self.root_url = root_url
-        self.output_address = output_address
 
-    def __repr__(self) -> str:
-        return f"WebScraper(root_url={self.root_url}, output_address={self.output_address})"
+    def delay_requests(self):
+        time.sleep(random.uniform(self.min_delay_between_requests, self.max_delay_between_requests))
 
-    def set_root_url(self, root_url: str):
-        self.root_url = root_url
+    def clean_text(self, text: str):
+        # remove extra space/tabs around newlines
+        text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
+        # collapse multiple newlines into one
+        text = re.sub(r"\n{2,}", "\n", text)
+        # Collapse multiple spaces into one
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        return text
 
-    def set_output_address(self, output_address: str):
-        self.output_address = output_address        
+        # Pretend i am microsoft edge browser on windows or some bs like that
+        # send request to root url
+        # get text from start page
 
-    def scrape(self):
-        pass
+        # add all relevant additional urls to list
+        # send get requests to urls i haven't visited before
+        # get html or docx data or whatever else needs to be collected
+        # repeat until done or until it hits recursion limit
+
+    def scrape_urls(self, root_url, output_addr, max_recursion, max_urls_per_page, domain, recursion_level=0):
+        # recursively scrape links
+        if recursion_level >= max_recursion:
+            return None
+        if root_url in self.visited:
+            return
+        
+        print(f"Visiting {root_url}")
+        self.visited.add(root_url)
+
+        try:
+            r = requests.get(root_url, headers=self.headers, timeout=5)
+            r.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Failed: {root_url}")
+            return
+        
+        # Save Text contents
+        soup = BeautifulSoup(r.text, features="html.parser")
+        text = soup.get_text()
+        with open(output_addr, "at") as out:
+            out.write(self.clean_text(text))
+
+        self.delay_requests()
+
+        # Follow next urls
+        i = 0
+        for link in soup.find_all("a", href=True):
+            # Limit number of urls examined per page
+            if i >= max_urls_per_page:
+                break
+            i += 1
+
+            next_url = urljoin(root_url, link["href"])
+            if urlparse(next_url).netloc == domain:
+                self.scrape_urls(next_url, output_addr, max_recursion, max_urls_per_page, domain, recursion_level+1)

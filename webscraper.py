@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 import time
 import random
 import re
@@ -28,6 +28,20 @@ class WebScraper:
     def delay_requests(self):
         time.sleep(random.uniform(self.min_delay_between_requests, self.max_delay_between_requests))
 
+    
+    def normalize_url(self, url: str) -> str:
+        parsed = urlparse(url)
+
+        # Lowercase scheme and netloc
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+
+        # Normalize path (remove redundant slashes, etc.)
+        path = parsed.path or "/"
+
+        # Rebuild URL without fragment
+        return urlunparse((scheme, netloc, path, "", parsed.query, ""))
+
     def clean_text(self, text: str):
         # remove extra space/tabs around newlines
         text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
@@ -46,15 +60,39 @@ class WebScraper:
         # get html or docx data or whatever else needs to be collected
         # repeat until done or until it hits recursion limit
 
+    def read_html(self, r, output_addr, max_urls_per_page):
+        # Save Text contents
+        soup = BeautifulSoup(r.text, features="html.parser")
+        text = soup.get_text()
+        with open(output_addr, "at", encoding="utf-8", errors="ignore") as out:
+            out.write(self.clean_text(text))
+
+        self.delay_requests()
+
+        # Follow next urls
+        link_list = []
+        for link in soup.find_all("a", href=True, limit=max_urls_per_page):
+            # Append normalized url
+            link_list.append(self.normalize_url(str(link["href"])))
+
+        return link_list
+
     def scrape_urls(self, root_url, output_addr, max_recursion, max_urls_per_page, domain, recursion_level=0):
         # recursively scrape links
+
+        # Check if condition is met to stop scraping branch
         if recursion_level >= max_recursion:
             return None
         if root_url in self.visited:
             return
+        if len(root_url) < 8 and root_url[:8] != "https://":
+            return
+        
+        self.visited.add(root_url)
         
         print(f"Visiting {root_url}")
-        self.visited.add(root_url)
+
+        # Get request
 
         try:
             r = requests.get(root_url, headers=self.headers, timeout=5)
@@ -63,22 +101,16 @@ class WebScraper:
             print(f"Failed: {root_url}")
             return
         
-        # Save Text contents
-        soup = BeautifulSoup(r.text, features="html.parser")
-        text = soup.get_text()
-        with open(output_addr, "at") as out:
-            out.write(self.clean_text(text))
-
-        self.delay_requests()
+        # Check if content is html
+        
+        if "text/html" not in r.headers.get("Content-Type", ""):
+            print(f"Skipping non-HTML content: {root_url}")
+            return
 
         # Follow next urls
-        i = 0
-        for link in soup.find_all("a", href=True):
-            # Limit number of urls examined per page
-            if i >= max_urls_per_page:
-                break
-            i += 1
-
-            next_url = urljoin(root_url, link["href"])
-            if urlparse(next_url).netloc == domain:
-                self.scrape_urls(next_url, output_addr, max_recursion, max_urls_per_page, domain, recursion_level+1)
+        link_list = self.read_html(r, output_addr, max_urls_per_page)
+        
+        for url in link_list:
+            abs_url = urljoin(root_url, url)
+            if urlparse(abs_url).netloc == domain:
+                self.scrape_urls(abs_url, output_addr, max_recursion, max_urls_per_page, domain, recursion_level+1)
